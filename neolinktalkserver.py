@@ -3,6 +3,7 @@ import websockets
 import subprocess
 import sys
 import argparse
+import psutil
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='WebSocket server for Neolink audio communication')
@@ -28,6 +29,22 @@ def get_neolink_cmd(args):
         "-m",
         "-i", "fdsrc fd=0"
     ]
+
+def kill_existing_neolink_processes(neolink_cmd):
+    for proc in psutil.process_iter(['pid', 'cmdline']):
+        try:
+            cmdline = proc.info['cmdline']
+            if cmdline and len(cmdline) >= len(neolink_cmd):
+                # Check if the command matches exactly
+                if cmdline[:len(neolink_cmd)] == neolink_cmd:
+                    print(f"Killing existing neolink process (PID: {proc.info['pid']})")
+                    psutil.Process(proc.info['pid']).terminate()
+                    try:
+                        psutil.Process(proc.info['pid']).wait(timeout=3)
+                    except psutil.TimeoutExpired:
+                        psutil.Process(proc.info['pid']).kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
 
 async def handle_audio(websocket, neolink_cmd):
     print(f"Client connected: {websocket.remote_address}")
@@ -72,6 +89,9 @@ async def handle_audio(websocket, neolink_cmd):
 async def main():
     args = parse_arguments()
     neolink_cmd = get_neolink_cmd(args)
+    
+    # Kill any existing processes running the same command
+    kill_existing_neolink_processes(neolink_cmd)
     
     async def wrapped_handle_audio(websocket):
         await handle_audio(websocket, neolink_cmd)
